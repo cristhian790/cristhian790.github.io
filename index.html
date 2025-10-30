@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rifa de Buchanan's (Reserva)</title>
+    <title>Rifa de Buchanan's (Sincronizada)</title>
     <!-- Carga de Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
@@ -76,14 +76,37 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* Estilo para el botón de reseteo personalizado */
+        .confirm-button {
+            transition: all 0.2s;
+        }
     </style>
 </head>
 <body class="min-h-screen p-4 md:p-8">
 
+    <!-- Modal para Confirmación de Acción (Reemplaza alert/confirm) -->
+    <div id="confirmationModal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden flex justify-center items-center p-4 z-50">
+        <div class="bg-white p-6 rounded-lg shadow-2xl w-full max-w-sm text-center">
+            <h2 id="confirmTitle" class="text-xl font-bold mb-3 text-red-600"></h2>
+            <p id="confirmMessage" class="text-gray-700 mb-6"></p>
+            <div class="flex justify-center space-x-3">
+                <button type="button" onclick="closeCustomModal()"
+                        class="px-4 py-2 bg-gray-300 text-gray-800 font-semibold rounded-md hover:bg-gray-400 transition">
+                    Cancelar
+                </button>
+                <button type="button" id="confirmActionBtn"
+                        class="px-4 py-2 bg-red-600 text-white font-semibold rounded-md hover:bg-red-700 transition confirm-button">
+                    Confirmar
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Admin Section (Hidden by default, reveal with Ctrl+Shift+A / Cmd+Shift+A) -->
     <div id="adminPanel" class="max-w-6xl mx-auto bg-red-50 p-6 md:p-8 shadow-inner rounded-xl mb-8 hidden">
         <h2 class="text-2xl font-bold text-red-700 mb-4 border-b pb-2">Panel de Administración (Control de Boletos)</h2>
-        <p class="text-sm text-red-600 mb-4">Usa este panel para ver el estado de todos los boletos y resetear los que hayan sido tomados incorrectamente. (Abre con Ctrl+Shift+A)</p>
+        <p class="text-sm text-red-600 mb-4">Usa este panel para ver el estado de todos los boletos y resetear los que hayan sido tomados incorrectamente. (Abre con <kbd>Ctrl+Shift+A</kbd> / <kbd>Cmd+Shift+A</kbd>)</p>
         
         <div class="overflow-x-auto">
             <table class="min-w-full bg-white border border-red-200 rounded-lg">
@@ -108,7 +131,7 @@
                 Rifa: ¡Gana una botella de Buchanan's!
             </h1>
             <p class="text-lg text-gray-600">
-                Selecciona y reserva tus números.
+                Selecciona y reserva tus números. Estado en tiempo real.
             </p>
             <div class="mt-4 p-3 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 rounded-lg shadow-md">
                 <p class="font-bold">Aviso Importante:</p>
@@ -116,6 +139,7 @@
                     <span class="font-semibold">Costo por boleto:</span> $2 USD (Pago externo). Por favor, reserva solo los boletos que vas a pagar.
                 </p>
             </div>
+            <p id="userIdDisplay" class="mt-3 text-xs text-gray-400">ID de Usuario: Cargando...</p>
         </header>
 
         <!-- Leyenda de Colores -->
@@ -133,7 +157,7 @@
         <!-- Grid de Boletos -->
         <div id="ticketGrid" class="ticket-grid">
             <!-- Los boletos se renderizarán aquí -->
-            <p class="col-span-full text-center text-gray-500">Cargando boletos...</p>
+            <p class="col-span-full text-center text-gray-500">Esperando conexión a la base de datos...</p>
         </div>
     </div>
 
@@ -141,8 +165,7 @@
     <div id="loadingOverlay" class="loading-overlay hidden">
         <div class="flex flex-col items-center">
             <div class="spinner"></div>
-            <!-- He modificado este mensaje para confirmar que se ejecuta la versión local -->
-            <p class="mt-3 text-lg font-semibold text-blue-600" id="loadingMessage">Iniciando aplicación local...</p>
+            <p class="mt-3 text-lg font-semibold text-blue-600" id="loadingMessage">Conectando a Firebase...</p>
         </div>
     </div>
 
@@ -153,7 +176,7 @@
             <p class="text-gray-700 mb-4">Ingresa tu nombre o alias para confirmar la reserva:</p>
             
             <input type="text" id="ownerNameInput" required placeholder="Tu Nombre o Alias" 
-                   class="w-full p-3 border border-gray-300 rounded-md mb-4 focus:ring-indigo-500 focus:border-indigo-500">
+                    class="w-full p-3 border border-gray-300 rounded-md mb-4 focus:ring-indigo-500 focus:border-indigo-500">
             
             <div class="flex justify-end space-x-3">
                 <button type="button" onclick="closeModal()"
@@ -184,14 +207,83 @@
     </div>
 
 
-    <!-- Script de Lógica Local (localStorage) -->
-    <script type="text/javascript">
+    <!-- Script de Lógica con Firebase -->
+    <script type="module">
+        // Importaciones de Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        // *** CAMBIO CLAVE: Usaremos signInAnonymously() para la autenticación en el entorno externo. ***
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, writeBatch,
+            setLogLevel 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // =========================================================================
+        // --- INICIO DE CONFIGURACIÓN REQUERIDA PARA HOSTING EXTERNO (IMPORTANTE) ---
+        // =========================================================================
+
+        // 1. Define un ID de aplicación (o déjalo fijo, ya que no usarás el de Canvas)
+        // Puedes usar el ID de tu proyecto de Firebase.
+        const appId = 'rifa-buchanans-001'; // <-- CAMBIA ESTO (ej. por tu Project ID de Firebase)
+
+        // 2. TU CONFIGURACIÓN REAL DE FIREBASE VA AQUÍ
+        // Reemplaza el objeto vacío con tu configuración copiada de la consola de Firebase.
+        const firebaseConfig = {
+                apiKey: "AIzaSyBVFm_w1BYv83WVT_lYQ1vC5khlR52YX9A",
+                authDomain: "sorteo-buchanans.firebaseapp.com",
+                projectId: "sorteo-buchanans",
+                storageBucket: "sorteo-buchanans.firebasestorage.app",
+                messagingSenderId: "139692000357",
+                appId: "1:139692000357:web:19c49db9ad89b345eff28c",
+        };
+
+        // Verificación de configuración para evitar el error de API Key y otros fallos.
+        const isConfigPlaceholder = 
+            firebaseConfig.apiKey === "TU_API_KEY" ||
+            firebaseConfig.projectId === "TU_PROJECT_ID";
+
+        if (isConfigPlaceholder) {
+            document.getElementById('loadingOverlay').classList.add('hidden');
+            document.getElementById('ticketGrid').innerHTML = `
+                <div class="col-span-full text-center p-8 bg-red-100 border border-red-400 rounded-lg">
+                    <h2 class="text-xl font-bold text-red-700 mb-2">⛔ ERROR CRÍTICO: Configuración de Firebase Pendiente ⛔</h2>
+                    <p class="text-red-600 mb-4">
+                        La aplicación detectó que aún estás usando los valores de marcador de posición.
+                    </p>
+                    <p class="text-red-600 font-semibold text-left mx-auto max-w-sm">
+                        Para solucionar este error, debes editar el código fuente de <code class="font-mono text-sm">index.html</code> y reemplazar los siguientes campos en <code class="font-mono text-sm">firebaseConfig</code> con tus valores reales de la consola de Firebase:
+                        <ul class="list-disc list-inside mt-2 text-sm font-normal ml-4">
+                            <li><code class="font-mono">apiKey</code></li>
+                            <li><code class="font-mono">authDomain</code></li>
+                            <li><code class="font-mono">projectId</code></li>
+                            <li><code class="font-mono">storageBucket</code></li>
+                            <li><code class="font-mono">messagingSenderId</code></li>
+                            <li><code class="font-mono">appId</code></li>
+                        </ul>
+                    </p>
+                </div>
+            `;
+            console.error("Firebase Initialization Error: firebaseConfig is using default placeholder values.");
+        }
+
+
+        // El token de autenticación de Canvas ya no se usa aquí.
+        // =========================================================================
+        // --- FIN DE CONFIGURACIÓN REQUERIDA PARA HOSTING EXTERNO ---
+        // =========================================================================
+
+
+        let app;
+        let db;
+        let auth;
+        let userId = 'anon'; // Default value before auth
+        let ticketsRef; // Referencia a la colección de boletos
+        let isAuthReady = false;
+
+        // Estructura de datos en memoria
+        let ticketsData = {};
         
-        // --- Variables Globales y Almacenamiento Local ---
-        const TICKET_STORAGE_KEY = 'buchanans_raffle_tickets_v1';
-        let ticketsData = {}; // Objeto que contendrá los 100 boletos en memoria
-        
-        // Referencias del DOM
+        // Referencias del DOM (resto de referencias...)
         const ticketGrid = document.getElementById('ticketGrid');
         const loadingOverlay = document.getElementById('loadingOverlay');
         const buyModal = document.getElementById('buyModal');
@@ -200,75 +292,55 @@
         const errorMsg = document.getElementById('errorMsg');
         const ownerNameInput = document.getElementById('ownerNameInput');
         const loadingMessage = document.getElementById('loadingMessage');
-        
-        // Admin Panel Refs
         const adminPanel = document.getElementById('adminPanel');
         const adminTicketList = document.getElementById('adminTicketList');
+        const userIdDisplay = document.getElementById('userIdDisplay');
+        const confirmationModal = document.getElementById('confirmationModal');
+        const confirmTitle = document.getElementById('confirmTitle');
+        const confirmMessage = document.getElementById('confirmMessage');
+        const confirmActionBtn = document.getElementById('confirmActionBtn');
         
         let selectedNumberToReserve = null;
 
 
-        // --- Funciones de Almacenamiento ---
+        // --- Funciones de Utilidad ---
 
-        function saveTickets() {
-            // Convertimos el objeto ticketsData a un array para guardar en localStorage
-            const list = Object.values(ticketsData);
-            localStorage.setItem(TICKET_STORAGE_KEY, JSON.stringify(list));
-        }
-
-        function loadTicketsFromStorage() {
-            const data = localStorage.getItem(TICKET_STORAGE_KEY);
-            if (data) {
-                // Convertimos la lista de boletos (array en storage) a un objeto por número (para acceso rápido)
-                const list = JSON.parse(data);
-                const newTicketsData = {};
-                list.forEach(ticket => {
-                    newTicketsData[ticket.number] = ticket;
-                });
-                ticketsData = newTicketsData;
-            } else {
-                // Si no hay datos, inicializar (sembrar)
-                seedData();
-            }
-        }
-        
-        function seedData() {
-            console.log("Inicializando 100 boletos en localStorage...");
-            const initialTickets = [];
-            for (let i = 1; i <= 100; i++) {
-                initialTickets.push({
-                    number: i,
-                    isTaken: false,
-                    ownerName: "",
-                    timestamp: null
-                });
-            }
-            // Convertir la lista inicial a un objeto por número antes de guardar en la memoria
-            const newTicketsData = {};
-            initialTickets.forEach(ticket => {
-                newTicketsData[ticket.number] = ticket;
-            });
-            ticketsData = newTicketsData;
-            saveTickets(); // Guardar el estado inicial en localStorage
-        }
-        
-        // --- Utilidades de UI ---
-
-        function showLoading(show) {
+        function showLoading(show, message = "Procesando...") {
+            loadingMessage.textContent = message;
             loadingOverlay.classList.toggle('hidden', !show);
         }
 
-        function alertUser(title, message) {
-            // Reutilizamos el modal de 'viewModal' para mostrar mensajes de error/alerta
-            document.getElementById('viewModalNumber').textContent = title;
-            document.getElementById('viewModalOwner').textContent = message;
-            viewModal.classList.remove('hidden');
+        // Simulación de alert/confirm
+        let customModalCallback = null;
+        window.openCustomModal = (title, message, isConfirm = false, onConfirm = null) => {
+            confirmTitle.textContent = title;
+            confirmMessage.textContent = message;
+            
+            confirmActionBtn.classList.toggle('hidden', !isConfirm);
+            confirmActionBtn.onclick = () => {
+                closeCustomModal();
+                if (onConfirm) onConfirm();
+            };
+
+            const closeBtn = confirmationModal.querySelector('button:first-child');
+            closeBtn.classList.toggle('hidden', isConfirm); // Ocultar Cancelar si es solo alerta
+            
+            confirmationModal.classList.remove('hidden');
         }
 
+        window.closeCustomModal = () => {
+            confirmationModal.classList.add('hidden');
+        }
+        
+        // Modal para reservar
         window.openModal = (number) => {
+            if (!isAuthReady) {
+                openCustomModal("Error de Conexión", "La base de datos aún no está lista. Intenta de nuevo en un momento.", false);
+                return;
+            }
             selectedNumberToReserve = number;
             document.getElementById('modalNumber').textContent = number;
-            ownerNameInput.value = '';
+            ownerNameInput.value = localStorage.getItem('ownerName') || ''; // Precarga el último nombre usado
             errorMsg.classList.add('hidden');
             reserveButton.disabled = false;
             buyModal.classList.remove('hidden');
@@ -279,18 +351,7 @@
             buyModal.classList.add('hidden');
         }
         
-        window.confirmReservation = () => {
-            const name = ownerNameInput.value.trim();
-            if (name.length < 3) {
-                errorMsg.textContent = "Por favor, ingresa un nombre o alias válido (mínimo 3 letras).";
-                errorMsg.classList.remove('hidden');
-                return;
-            }
-            if (selectedNumberToReserve) {
-                buyTicket(selectedNumberToReserve, name);
-            }
-        }
-
+        // Modal para ver ocupado
         window.openViewModal = (number, ownerName) => {
             document.getElementById('viewModalNumber').textContent = number;
             document.getElementById('viewModalOwner').textContent = ownerName;
@@ -301,19 +362,111 @@
             viewModal.classList.add('hidden');
         }
         
-        // Mostrar/Ocultar el panel de administración con Ctrl+Shift+A o Cmd+Shift+A
-        document.addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toUpperCase() === 'A') {
-                e.preventDefault();
-                adminPanel.classList.toggle('hidden');
-                // Al abrir el panel, aseguramos que se renderice la lista de administración
-                if (!adminPanel.classList.contains('hidden')) {
-                    renderAdminList(ticketsData);
-                }
+        // --- Lógica de Administración: Resetear Boleto (Solo para admins) ---
+        
+        window.resetTicket = (number) => {
+            if (!isAuthReady) return;
+
+            const ticket = ticketsData[number];
+            if (!ticket || !ticket.isTaken) {
+                openCustomModal("Error", "Este boleto ya está disponible.", false);
+                return;
             }
-        });
 
+            // Usamos el modal personalizado para confirmar el reseteo
+            openCustomModal(
+                "Confirmar Reseteo", 
+                `¿Estás seguro de liberar el boleto #${number} reservado por ${ticket.ownerName}?`, 
+                true, 
+                async () => {
+                    showLoading(true, `Reseteando boleto #${number}...`);
+                    try {
+                        const batch = writeBatch(db);
+                        const ticketDocRef = doc(ticketsRef, number.toString());
 
+                        batch.update(ticketDocRef, {
+                            isTaken: false,
+                            ownerName: "",
+                            timestamp: null,
+                            userId: null // Limpiar el ID de usuario que lo reservó
+                        });
+
+                        await batch.commit();
+                        console.log(`Boleto #${number} reseteado en Firestore.`);
+                        // onSnapshot se encargará de actualizar la UI
+                    } catch (e) {
+                        console.error("Error reseteando el boleto: ", e);
+                        openCustomModal("Error de BD", `No se pudo resetear el boleto. ${e.message}`, false);
+                    } finally {
+                        showLoading(false);
+                    }
+                }
+            );
+        }
+
+        // --- Lógica de Reserva ---
+
+        window.confirmReservation = async () => {
+            const name = ownerNameInput.value.trim();
+            const number = selectedNumberToReserve;
+            
+            if (name.length < 3) {
+                errorMsg.textContent = "Por favor, ingresa un nombre o alias válido (mínimo 3 letras).";
+                errorMsg.classList.remove('hidden');
+                return;
+            }
+
+            localStorage.setItem('ownerName', name); // Guardar el nombre para futuros usos
+            
+            reserveButton.disabled = true;
+            reserveButton.textContent = "Reservando...";
+            errorMsg.classList.add('hidden');
+
+            try {
+                if (ticketsData[number] && ticketsData[number].isTaken) {
+                    // Doble verificación: si ya fue tomado, es un conflicto de tiempo real.
+                    errorMsg.textContent = `El número ${number} fue reservado justo ahora por ${ticketsData[number].ownerName}. Selecciona otro.`;
+                    errorMsg.classList.remove('hidden');
+                    return;
+                }
+                
+                showLoading(true, `Finalizando reserva del #${number}...`);
+
+                // 1. Obtener la referencia al documento del boleto
+                const ticketDocRef = doc(ticketsRef, number.toString());
+
+                // 2. Usar un lote (batch) para asegurar la consistencia si se usa con reglas de seguridad
+                const batch = writeBatch(db);
+                
+                // Actualizar el documento del boleto
+                batch.update(ticketDocRef, {
+                    isTaken: true,
+                    ownerName: name,
+                    timestamp: new Date().toISOString(),
+                    userId: userId 
+                });
+
+                await batch.commit();
+                
+                closeModal();
+                openCustomModal("¡RESERVA CONFIRMADA!", `Has reservado el boleto #${number} a nombre de: ${name}.`, false);
+
+                // onSnapshot se encargará del renderizado
+            } catch (e) {
+                console.error("Error al confirmar la reserva: ", e);
+                // NOTA: Si ves un error de "Missing or insufficient permissions", significa que debes
+                // configurar las Reglas de Seguridad de Firestore para permitir
+                // la lectura/escritura por usuarios anónimos o por el método de autenticación que uses.
+                errorMsg.textContent = `Error al guardar la reserva: ${e.message}`;
+                errorMsg.classList.remove('hidden');
+                openCustomModal("Error de Reserva", `Hubo un error de conexión o el boleto ya fue tomado. ${e.message}`, false);
+            } finally {
+                reserveButton.disabled = false;
+                reserveButton.textContent = "Confirmar Reserva";
+                showLoading(false);
+            }
+        }
+        
         // --- Lógica de Renderizado Principal ---
 
         function renderGrid(tickets) {
@@ -326,39 +479,35 @@
                 button.textContent = i;
                 button.dataset.number = i;
                 
-                let buttonClass = 'available';
+                let buttonClass = '';
                 let clickHandler = null;
 
                 if (ticket.isTaken) {
-                    // Estado: Ocupado/Reservado
                     buttonClass = 'reserved';
                     // Al hacer click en un ocupado, mostramos quién lo tiene
                     clickHandler = () => openViewModal(ticket.number, ticket.ownerName);
                 } else {
-                    // Estado: Disponible
                     buttonClass = 'available';
                     // Al hacer click, abrimos el modal para reservar
                     clickHandler = () => openModal(ticket.number);
                 }
                 
                 button.className = `ticket-button rounded-lg shadow-md hover:shadow-lg transition-shadow ${buttonClass}`;
-                if (clickHandler) {
-                    button.onclick = clickHandler;
-                } else {
-                    button.onclick = null;
-                }
+                button.onclick = clickHandler;
 
                 fragment.appendChild(button);
             }
             ticketGrid.appendChild(fragment);
+
+            // Si el panel de administración está abierto, lo actualizamos
+            if (!adminPanel.classList.contains('hidden')) {
+                renderAdminList(tickets);
+            }
         }
-        
-        // --- Lógica de Renderizado del Admin Panel ---
         
         function renderAdminList(tickets) {
             adminTicketList.innerHTML = '';
             
-            // Convertir objeto tickets a array, ordenar por número y filtrar solo los tomados
             const takenTickets = Object.values(tickets)
                 .filter(t => t.isTaken)
                 .sort((a, b) => a.number - b.number);
@@ -386,80 +535,134 @@
             });
         }
         
-        // --- Lógica de Administración: Resetear Boleto ---
-        window.resetTicket = (number) => {
-            // Reemplazamos el confirm() nativo por una simulación
-            if (!window.confirm(`¿Estás seguro de resetear el boleto #${number}? Esto lo pondrá disponible de nuevo.`)) {
-                return;
+        // Mostrar/Ocultar el panel de administración con Ctrl+Shift+A o Cmd+Shift+A
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toUpperCase() === 'A') {
+                e.preventDefault();
+                adminPanel.classList.toggle('hidden');
+                // Al abrir el panel, aseguramos que se renderice la lista de administración
+                if (!adminPanel.classList.contains('hidden')) {
+                    renderAdminList(ticketsData);
+                }
             }
-            
-            if (ticketsData[number]) {
-                // Resetear el estado en la memoria
-                ticketsData[number].isTaken = false;
-                ticketsData[number].ownerName = "";
-                ticketsData[number].timestamp = null;
+        });
 
-                // Guardar y renderizar
-                saveTickets();
-                renderGrid(ticketsData);
-                renderAdminList(ticketsData);
-                console.log(`Boleto #${number} reseteado.`);
+        // --- Inicialización de Firebase y Listeners de Datos ---
+
+        async function initFirebase() {
+            // Verificar si la configuración es correcta antes de intentar inicializar
+            if (isConfigPlaceholder) {
+                return; // Detener la inicialización si la configuración es la de por defecto
             }
-        }
 
-
-        // --- Lógica de Reserva ---
-
-        function buyTicket(number, name) {
-            
-            reserveButton.disabled = true;
-            reserveButton.textContent = "Reservando...";
-            errorMsg.classList.add('hidden');
-
-            // Simulación de transacción (verifica si el boleto fue tomado localmente)
-            if (ticketsData[number] && ticketsData[number].isTaken) {
-                 // Si fue tomado por otro
-                 errorMsg.textContent = `El número ${number} ya está reservado por ${ticketsData[number].ownerName}. Selecciona otro.`;
-            } else if (ticketsData[number]) {
-                // Tomar el boleto
-                ticketsData[number].isTaken = true;
-                ticketsData[number].ownerName = name;
-                ticketsData[number].timestamp = new Date().toISOString();
-
-                // Éxito: Guardar y renderizar
-                saveTickets();
-                renderGrid(ticketsData);
-                closeModal();
-                alertUser("¡RESERVA CONFIRMADA!", `Has reservado el boleto #${number} con el nombre: ${name}.`);
+            try {
+                // setLogLevel('debug'); // Descomenta para ver logs de Firebase
                 
-            } else {
-                 errorMsg.textContent = "Error: Boleto no encontrado en el sistema local.";
+                // Inicializa Firebase con tu configuración
+                app = initializeApp(firebaseConfig); 
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                loadingMessage.textContent = "Autenticando usuario (Anónimamente)...";
+
+                // *** CAMBIO CLAVE: Usamos signInAnonymously() en lugar del token de Canvas ***
+                await signInAnonymously(auth);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        // El userId es el UID anónimo generado por Firebase
+                        userId = user.uid; 
+                        userIdDisplay.textContent = `ID de Usuario: ${userId}`;
+                        isAuthReady = true;
+
+                        // Mantenemos la estructura de Canvas para la ruta
+                        ticketsRef = collection(db, `artifacts/${appId}/public/data/raffle_tickets`);
+                        
+                        loadingMessage.textContent = "Verificando boletos y sembrando datos...";
+                        await ensureTicketsExist();
+                        
+                        // Iniciar el listener de tiempo real (onSnapshot)
+                        startRealtimeListener();
+
+                    } else {
+                        isAuthReady = false;
+                        loadingMessage.textContent = "Error de autenticación. No se puede conectar al servidor.";
+                    }
+                });
+
+            } catch (e) {
+                console.error("Error en la inicialización de Firebase: ", e);
+                // Si el error es de API Key no válida, lo manejamos con el mensaje de arriba.
+                // Si es otro error, mostramos el modal.
+                if (e.code && e.code.includes('auth/api-key-not-valid')) {
+                    // Ya manejado por la comprobación inicial, pero como fallback
+                    openCustomModal("Error de Configuración", "La clave de API de Firebase no es válida. Revisa los valores en 'firebaseConfig'.", false);
+                } else {
+                    openCustomModal("Error Crítico", `No se pudo conectar a Firebase. Asegúrate de que tu 'firebaseConfig' es correcta y tus Reglas de Seguridad están configuradas. Error: ${e.message}`, false);
+                }
+                loadingOverlay.classList.add('hidden');
             }
-
-            reserveButton.disabled = false;
-            reserveButton.textContent = "Confirmar Reserva";
         }
 
-        // --- Inicio de la Aplicación ---
-        function initializeApp() {
-            showLoading(true);
-            loadingMessage.textContent = "Cargando datos guardados localmente...";
-            
-            // 1. Cargar datos (o inicializarlos si no existen)
-            loadTicketsFromStorage();
-            
-            // 2. Renderizar la cuadrícula con los datos cargados/inicializados
-            renderGrid(ticketsData);
-            
-            // 3. Ocultar el overlay DESPUÉS de renderizar
-            setTimeout(() => {
-                loadingMessage.textContent = "¡Listo!";
-                showLoading(false);
-            }, 500); // Mantenemos un pequeño retraso para asegurar que el usuario vea el mensaje.
+        async function ensureTicketsExist() {
+            // Esto solo verifica la existencia del primer boleto
+            const ticketDocRef = doc(ticketsRef, "1");
+            const docSnap = await getDoc(ticketDocRef);
+
+            if (!docSnap.exists()) {
+                console.log("No se encontraron boletos. Sembrando 100 boletos iniciales...");
+                const batch = writeBatch(db);
+                
+                for (let i = 1; i <= 100; i++) {
+                    const newTicketRef = doc(ticketsRef, i.toString()); // Usamos el número como ID del documento
+                    batch.set(newTicketRef, {
+                        number: i,
+                        isTaken: false,
+                        ownerName: "",
+                        timestamp: null,
+                        userId: null
+                    });
+                }
+                await batch.commit();
+                console.log("Sembrado de datos inicial completado.");
+            }
         }
 
-        window.onload = initializeApp;  
+        function startRealtimeListener() {
+            loadingMessage.textContent = "Sincronizando datos en tiempo real...";
+            
+            // Query para obtener todos los boletos
+            const q = query(ticketsRef);
 
+            // Escuchar cambios en tiempo real
+            onSnapshot(q, (snapshot) => {
+                const newTicketsData = {};
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    // Usamos el número del boleto como clave para el acceso rápido
+                    newTicketsData[data.number] = data; 
+                });
+
+                ticketsData = newTicketsData;
+                
+                // Renderizar la interfaz con los nuevos datos
+                renderGrid(ticketsData);
+                
+                // Ocultar el loading si es la primera carga
+                if (!loadingOverlay.classList.contains('hidden')) {
+                    setTimeout(() => showLoading(false), 500); 
+                }
+
+                console.log("Datos actualizados desde Firestore.");
+
+            }, (error) => {
+                console.error("Error al escuchar cambios en Firestore: ", error);
+                openCustomModal("Error de Conexión", "Se perdió la conexión con el servidor. Por favor, recarga la página.", false);
+            });
+        }
+
+
+        window.onload = initFirebase;
     </script>
 </body>
 </html>
