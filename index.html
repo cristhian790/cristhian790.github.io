@@ -223,25 +223,23 @@
         // =========================================================================
 
         // 1. Define un ID de aplicación (o déjalo fijo, ya que no usarás el de Canvas)
-        // Puedes usar el ID de tu proyecto de Firebase.
-        const appId = 'rifa-buchanans-001'; // <-- CAMBIA ESTO (ej. por tu Project ID de Firebase)
+        const appId = 'rifa-buchanans-001'; // <-- PUEDES USAR ESTO O TU PROJECT ID DE FIREBASE
 
-        // 2. TU CONFIGURACIÓN REAL DE FIREBASE VA AQUÍ
-        // Reemplaza el objeto vacío con tu configuración copiada de la consola de Firebase.
+        // 2. TU CONFIGURACIÓN REAL DE FIREBASE VA AQUÍ (Reemplaza con los valores que ya pegaste,
+        // PERO ASEGÚRATE DE QUE SEAN CORRECTOS PARA EL ERROR (auth/invalid-api-key))
         const firebaseConfig = {
-                apiKey: "AIzaSyBVFm_w1BYv83WVT_lYQ1vC5khlR52YX9A",
-                authDomain: "sorteo-buchanans.firebaseapp.com",
-                projectId: "sorteo-buchanans",
-                storageBucket: "sorteo-buchanans.firebasestorage.app",
-                messagingSenderId: "139692000357",
+     // Clave que me confirmaste, asegurando que está BIEN
+                apiKey: "AIzaSyBVfm_w1BYV83WVT_1YQ1VC5khL1R52YYX9A", 
+                authDomain: "sorteo-buchanans.firebaseapp.com", 
+                projectId: "sorteo-buchanans", 
+                storageBucket: "sorteo-buchanans.appspot.com", 
+                messagingSenderId: "139692000357", 
                 appId: "1:139692000357:web:19c49db9ad89b345eff28c",
-                measurementId: "G-DFEHTQ12E4"
+                measurementId: "G-DFEHTQ12E4" 
         };
 
         // Verificación de configuración para evitar el error de API Key y otros fallos.
-        const isConfigPlaceholder = 
-            firebaseConfig.apiKey === "TU_API_KEY" ||
-            firebaseConfig.projectId === "TU_PROJECT_ID";
+        const isConfigPlaceholder = firebaseConfig.apiKey.startsWith("TU_API_KEY");
 
         if (isConfigPlaceholder) {
             document.getElementById('loadingOverlay').classList.add('hidden');
@@ -577,6 +575,7 @@
                         isAuthReady = true;
 
                         // Mantenemos la estructura de Canvas para la ruta
+                        // Ruta de colección: artifacts/{appId}/public/data/raffle_tickets
                         ticketsRef = collection(db, `artifacts/${appId}/public/data/raffle_tickets`);
                         
                         loadingMessage.textContent = "Verificando boletos y sembrando datos...";
@@ -595,12 +594,7 @@
                 console.error("Error en la inicialización de Firebase: ", e);
                 // Si el error es de API Key no válida, lo manejamos con el mensaje de arriba.
                 // Si es otro error, mostramos el modal.
-                if (e.code && e.code.includes('auth/api-key-not-valid')) {
-                    // Ya manejado por la comprobación inicial, pero como fallback
-                    openCustomModal("Error de Configuración", "La clave de API de Firebase no es válida. Revisa los valores en 'firebaseConfig'.", false);
-                } else {
-                    openCustomModal("Error Crítico", `No se pudo conectar a Firebase. Asegúrate de que tu 'firebaseConfig' es correcta y tus Reglas de Seguridad están configuradas. Error: ${e.message}`, false);
-                }
+                openCustomModal("Error Crítico", `No se pudo conectar a Firebase. Asegúrate de que tu 'firebaseConfig' es correcta y tus Reglas de Seguridad están configuradas. Error: ${e.message}`, false);
                 loadingOverlay.classList.add('hidden');
             }
         }
